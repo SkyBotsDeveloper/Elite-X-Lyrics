@@ -1,0 +1,39 @@
+{
+  "name": "elite-x-lyrics",
+  "description": "Telegram lyrics bot with multi-source fallbacks, Hindi Hinglish transliteration, inline search, and Heroku/VPS deployment support.",
+  "env": {
+    "TELEGRAM_BOT_TOKEN": {
+      "description": "Telegram bot token from BotFather"
+    },
+    "WEBHOOK_URL": {
+      "description": "Public HTTPS URL for webhook mode, for example https://your-app.herokuapp.com",
+      "required": false
+    },
+    "WEBHOOK_SECRET": {
+      "description": "Optional secret token for Telegram webhook verification",
+      "required": false
+    },
+    "RESULT_LIMIT": {
+      "description": "Maximum search results shown in regular chat searches",
+      "required": false,
+      "value": "10"
+    },
+    "INLINE_RESULT_LIMIT": {
+      "description": "Maximum inline query results",
+      "required": false,
+      "value": "5"
+    },
+    "LOG_LEVEL": {
+      "description": "Application log level",
+      "required": false,
+      "value": "INFO"
+    }
+  },
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  }
+}
+

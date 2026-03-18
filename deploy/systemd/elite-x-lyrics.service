@@ -1,0 +1,16 @@
+[Unit]
+Description=Elite X Lyrics Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/elite-x-lyrics
+EnvironmentFile=/opt/elite-x-lyrics/.env
+ExecStart=/usr/bin/env python -m elite_x_lyrics.main
+Restart=always
+RestartSec=5
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target
