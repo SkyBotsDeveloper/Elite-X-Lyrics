@@ -43,6 +43,7 @@ class EliteXLyricsBot:
             ]
         )
         if self.settings.use_webhook and self.settings.webhook_endpoint:
+            self.polling_task = None
             await self.telegram.set_webhook(self.settings.webhook_endpoint, self.settings.webhook_secret)
             LOGGER.info("Webhook enabled at %s", self.settings.webhook_endpoint)
         else:
@@ -70,6 +71,9 @@ class EliteXLyricsBot:
             return
 
     async def _poll_updates(self) -> None:
+        if self.settings.use_webhook:
+            LOGGER.info("Skipping polling because webhook mode is active")
+            return
         while True:
             try:
                 updates = await self.telegram.get_updates(offset=self.offset, timeout=50)

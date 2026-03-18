@@ -5,7 +5,7 @@ import json
 import logging
 import re
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -42,9 +42,46 @@ SITE_SELECTORS: dict[str, list[str]] = {
     "lyricsmint.com": WORDPRESS_SELECTORS,
     "lyricsgoal.com": WORDPRESS_SELECTORS,
     "hinditracks.in": WORDPRESS_SELECTORS,
+    "hinditracks.co.in": WORDPRESS_SELECTORS,
     "lyricsbell.com": WORDPRESS_SELECTORS,
+    "songlyricsinenglish.com": [".entry-content", ".inside-article"],
+    "lyricsdex.com": [".lyrics-text.original-lyrics", ".original-content", ".lyrics-display"],
     "azlyrics.com": [],
 }
+
+PREFERRED_WEB_DOMAINS = {
+    "azlyrics.com",
+    "hinditracks.co.in",
+    "hinditracks.in",
+    "lyricsbell.com",
+    "lyricsdex.com",
+    "lyricsgoal.com",
+    "lyricsmint.com",
+    "songlyrics.com",
+    "songlyricsinenglish.com",
+}
+
+LYRICS_START_MARKERS = (
+    "lyrics in english",
+    "lyrics (romanized)",
+    "lyrics in hinglish",
+    "lyrics in hindi",
+    "original (romanized)",
+    "original lyrics",
+)
+
+LYRICS_END_MARKERS = (
+    "table of contents",
+    "lyrics meaning",
+    "meaning in hindi",
+    "translation in hindi",
+    "translation in telugu",
+    "lyrics details",
+    "song details",
+    "video song on youtube",
+    "faq",
+    "read more",
+)
 
 
 class LyricsEngine:
@@ -54,8 +91,13 @@ class LyricsEngine:
             timeout=settings.request_timeout,
             follow_redirects=True,
             headers={
-                "User-Agent": "EliteXLyricsBot/1.0",
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/133.0.0.0 Safari/537.36"
+                ),
                 "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
         )
         self.search_cache: TTLCache[str, list[SongCandidate]] = TTLCache(maxsize=512, ttl=900)
@@ -75,6 +117,7 @@ class LyricsEngine:
             self._search_lrclib(query, wanted),
             self._search_genius(query, wanted),
             self._search_ytmusic(query, wanted),
+            self._search_duckduckgo(query, min(wanted, 6)),
             self._search_wordpress(query, "lyricsmint.com", 4),
             self._search_wordpress(query, "lyricsgoal.com", 4),
             self._search_wordpress(query, "hinditracks.in", 4),
@@ -97,6 +140,11 @@ class LyricsEngine:
             return self.lyrics_cache[cache_key]
 
         result = await self.fetch_lyrics_direct(candidate)
+        if result and self._should_replace_ytmusic_with_web(candidate, result):
+            better_web_result = await self._find_better_web_result(candidate, original_query)
+            if better_web_result:
+                self.lyrics_cache[cache_key] = better_web_result
+                return better_web_result
         if result:
             self.lyrics_cache[cache_key] = result
             return result
@@ -108,20 +156,47 @@ class LyricsEngine:
                 continue
             result = await self.fetch_lyrics_direct(fallback)
             if result:
+                if self._should_replace_ytmusic_with_web(fallback, result):
+                    better_web_result = await self._find_better_web_result(fallback, original_query)
+                    if better_web_result:
+                        self.lyrics_cache[cache_key] = better_web_result
+                        return better_web_result
                 self.lyrics_cache[cache_key] = result
                 return result
         return None
 
     async def fetch_lyrics_direct(self, candidate: SongCandidate) -> LyricsResult | None:
-        attempts = [
-            self._build_result_from_embedded_lyrics(candidate),
-            self._fetch_from_ytmusic(candidate),
-            self._fetch_from_lrclib(candidate),
-            self._fetch_from_url(candidate),
-        ]
-        for attempt in attempts:
+        provider = str(candidate.provider_payload.get("provider") or "")
+        attempts: list[callable[[], Any]] = [lambda: self._build_result_from_embedded_lyrics(candidate)]
+
+        if provider in {"web", "websearch", "genius"}:
+            attempts.extend(
+                [
+                    lambda: self._fetch_from_url(candidate),
+                    lambda: self._fetch_from_lrclib(candidate),
+                    lambda: self._fetch_from_ytmusic(candidate),
+                ]
+            )
+        elif provider == "lrclib":
+            attempts.extend(
+                [
+                    lambda: self._fetch_from_lrclib(candidate),
+                    lambda: self._fetch_from_url(candidate),
+                    lambda: self._fetch_from_ytmusic(candidate),
+                ]
+            )
+        else:
+            attempts.extend(
+                [
+                    lambda: self._fetch_from_lrclib(candidate),
+                    lambda: self._fetch_from_ytmusic(candidate),
+                    lambda: self._fetch_from_url(candidate),
+                ]
+            )
+
+        for attempt_factory in attempts:
             try:
-                result = await attempt
+                result = await attempt_factory()
             except Exception as exc:
                 LOGGER.debug("Lyrics fetch failed for %s: %s", candidate.display_name, exc)
                 result = None
@@ -129,6 +204,41 @@ class LyricsEngine:
                 self.lyrics_cache[candidate.dedupe_key] = result
                 return result
         return None
+
+    async def _search_duckduckgo(self, query: str, limit: int) -> list[SongCandidate]:
+        search_query = f"{query} lyrics"
+        response = await self.http.get("https://html.duckduckgo.com/html/", params={"q": search_query})
+        if response.status_code >= 400:
+            return []
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        candidates: list[SongCandidate] = []
+        seen_urls: set[str] = set()
+
+        for link in soup.select("a.result__a, .result__title a"):
+            href = str(link.get("href") or "").strip()
+            resolved_url = self._extract_duckduckgo_target(href)
+            if not resolved_url or resolved_url in seen_urls:
+                continue
+            domain = domain_for_url(resolved_url)
+            if domain not in PREFERRED_WEB_DOMAINS:
+                continue
+
+            seen_urls.add(resolved_url)
+            title_text = clean_lyrics_text(link.get_text(" ", strip=True))
+            title, artist = self._guess_title_artist_from_heading(title_text)
+            candidate = SongCandidate(
+                title=title or title_text,
+                artist=artist,
+                source=domain,
+                url=resolved_url,
+                provider_payload={"provider": "websearch", "domain": domain},
+            )
+            candidate.search_score = score_candidate(query, candidate)
+            candidates.append(candidate)
+            if len(candidates) >= limit:
+                break
+        return candidates
 
     async def _search_ytmusic(self, query: str, limit: int) -> list[SongCandidate]:
         def do_search() -> list[dict[str, Any]]:
@@ -409,6 +519,17 @@ class LyricsEngine:
             return ""
         return re.sub(r"\[[0-9:.]+\]", "", value).strip()
 
+    def _extract_duckduckgo_target(self, href: str) -> str:
+        if not href:
+            return ""
+        if href.startswith("//duckduckgo.com/l/?"):
+            href = "https:" + href
+        parsed = urlparse(href)
+        if "duckduckgo.com" not in parsed.netloc:
+            return href
+        target = parse_qs(parsed.query).get("uddg", [""])[0]
+        return target
+
     def _guess_title_artist_from_heading(self, value: str) -> tuple[str, str]:
         text = re.sub(r"\s+", " ", value).strip()
         text = re.sub(r"\blyrics\b.*$", "", text, flags=re.IGNORECASE).strip(" -|:")
@@ -494,15 +615,72 @@ class LyricsEngine:
         best_text = ""
         for selector in selectors:
             for node in soup.select(selector):
-                block = clean_lyrics_text(node.get_text("\n", strip=True))
+                block = self._trim_lyrics_block(clean_lyrics_text(node.get_text("\n", strip=True)))
                 if not looks_like_lyrics(block):
                     continue
                 if len(block) > len(best_text):
                     best_text = block
         return best_text
 
+    def _trim_lyrics_block(self, text: str) -> str:
+        if not text:
+            return ""
+
+        lines = [line.strip() for line in clean_lyrics_text(text).splitlines()]
+        if not lines:
+            return ""
+
+        start_index = 0
+        for index, line in enumerate(lines):
+            lowered = line.lower()
+            if any(marker in lowered for marker in LYRICS_START_MARKERS):
+                start_index = index + 1
+
+        working = lines[start_index:] if start_index else lines
+
+        while working and (
+            ":" in working[0]
+            or len(working[0].split()) > 12
+            or any(token in working[0].lower() for token in ("song is sung by", "featuring", "lyricist", "music", "movie", "rating"))
+        ):
+            working.pop(0)
+
+        while working and working[0].lower() in {"original", "translations", "select translation", "romanized"}:
+            working.pop(0)
+
+        kept: list[str] = []
+        lyric_like_lines = 0
+        for line in working:
+            lowered = line.lower()
+            if lyric_like_lines >= 8 and any(marker in lowered for marker in LYRICS_END_MARKERS):
+                break
+            kept.append(line)
+            if line and len(line.split()) <= 10:
+                lyric_like_lines += 1
+
+        return clean_lyrics_text("\n".join(kept))
+
+    def _should_replace_ytmusic_with_web(self, candidate: SongCandidate, result: LyricsResult) -> bool:
+        provider = str(candidate.provider_payload.get("provider") or "")
+        if provider != "ytmusic":
+            return False
+        if result.source != "YouTube Music":
+            return False
+        return result.language.startswith("Hindi")
+
+    async def _find_better_web_result(self, candidate: SongCandidate, original_query: str) -> LyricsResult | None:
+        query = " ".join(part for part in [candidate.title, candidate.artist, original_query] if part).strip()
+        web_candidates = await self._search_duckduckgo(query, limit=5)
+        for web_candidate in web_candidates:
+            if domain_for_url(web_candidate.url) not in PREFERRED_WEB_DOMAINS:
+                continue
+            result = await self._fetch_from_url(web_candidate)
+            if result:
+                return result
+        return None
+
     def _finalize_result(self, candidate: SongCandidate, lyrics: str, source: str, url: str) -> LyricsResult | None:
-        cleaned = clean_lyrics_text(lyrics)
+        cleaned = self._trim_lyrics_block(clean_lyrics_text(lyrics))
         if not looks_like_lyrics(cleaned):
             return None
 
