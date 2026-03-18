@@ -347,8 +347,7 @@ class EliteXLyricsBot:
         return (
             f"Multiple matches found for:\n{query}\n\n"
             f"Choose the correct song.\n"
-            f"Page {page + 1}/{total_pages}\n"
-            "Elite X Lyrics | Siddhartha Abhimanyu | @IflexElite"
+            f"Page {page + 1}/{total_pages}"
         )
 
     def _selection_keyboard(self, session_id: str, candidates: list[SongCandidate], page: int) -> dict[str, Any]:
@@ -382,7 +381,6 @@ class EliteXLyricsBot:
             meta_lines.append(f"Language: {result.language}")
         if result.album:
             meta_lines.append(f"Album: {result.album}")
-        meta_lines.append("Elite X Lyrics | Siddhartha Abhimanyu | @IflexElite")
 
         chunks = split_message(result.lyrics, limit=3600)
         for index, chunk in enumerate(chunks):
