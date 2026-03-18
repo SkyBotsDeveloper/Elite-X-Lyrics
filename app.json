@@ -27,6 +27,11 @@
       "description": "Application log level",
       "required": false,
       "value": "INFO"
+    },
+    "WEB_CONCURRENCY": {
+      "description": "Keep the bot on a single worker because callback selection state is stored in memory.",
+      "required": false,
+      "value": "1"
     }
   },
   "formation": {
@@ -36,4 +41,3 @@
     }
   }
 }
-

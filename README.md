@@ -102,10 +102,13 @@ Steps:
    - `TELEGRAM_BOT_TOKEN`
    - `WEBHOOK_URL=https://your-app-name.herokuapp.com`
    - `WEBHOOK_SECRET=your-random-secret`
+   - `WEB_CONCURRENCY=1`
 3. Deploy the repo
 4. Start the `web` dyno
 
 The bot will automatically register the Telegram webhook on startup.
+
+Use a single worker on Heroku. This bot stores temporary song-selection state in memory for Telegram callback buttons, so multiple worker processes are not safe here.
 
 ## VPS Deployment
 

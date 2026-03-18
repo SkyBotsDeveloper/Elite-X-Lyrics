@@ -58,4 +58,10 @@ async def telegram_webhook(
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host=settings.host, port=settings.port, log_level=settings.log_level.lower())
+    uvicorn.run(
+        "elite_x_lyrics.main:app",
+        host=settings.host,
+        port=settings.port,
+        log_level=settings.log_level.lower(),
+        workers=1,
+    )

@@ -34,6 +34,14 @@ class EliteXLyricsBot:
     async def start(self) -> None:
         self.me = await self.telegram.get_me()
         self.username = str(self.me.get("username") or "")
+        await self.telegram.set_my_commands(
+            [
+                {"command": "start", "description": "Show how Elite X Lyrics works"},
+                {"command": "help", "description": "See usage examples"},
+                {"command": "lyrics", "description": "Search lyrics by title or lines"},
+                {"command": "credits", "description": "Show creator credits"},
+            ]
+        )
         if self.settings.use_webhook and self.settings.webhook_endpoint:
             await self.telegram.set_webhook(self.settings.webhook_endpoint, self.settings.webhook_secret)
             LOGGER.info("Webhook enabled at %s", self.settings.webhook_endpoint)
@@ -97,7 +105,7 @@ class EliteXLyricsBot:
         if command in {"start", "help"}:
             await self.telegram.send_message(
                 chat_id,
-                self._intro_text(),
+                self._help_text(),
                 reply_to_message_id=reply_to_message_id,
                 reply_markup=self._intro_keyboard(),
             )
@@ -120,6 +128,13 @@ class EliteXLyricsBot:
                 )
                 return
             await self._search_and_respond(chat_id, args, reply_to_message_id=reply_to_message_id)
+            return
+
+        await self.telegram.send_message(
+            chat_id,
+            "Unknown command.\nUse /start or /help to see how Elite X Lyrics works.",
+            reply_to_message_id=reply_to_message_id,
+        )
 
     async def _search_and_respond(self, chat_id: int, query: str, reply_to_message_id: int | None = None) -> None:
         await self.telegram.send_chat_action(chat_id, "typing")
@@ -294,6 +309,27 @@ class EliteXLyricsBot:
             "You can search naturally like Sunday song by Aditya or Tu Mere Koi Na by Arijit Singh.\n"
             "Hindi lyrics are returned in Hinglish when the source uses Devanagari.\n"
             "If multiple songs match, you will get pick buttons so you can choose the right song.\n"
+            f"{inline_hint}\n"
+            "Created by Siddhartha Abhimanyu and @IflexElite."
+        )
+
+    def _help_text(self) -> str:
+        inline_hint = f"Inline mode: @{self.username} <song or lyrics>" if self.username else "Inline mode can be enabled from BotFather."
+        return (
+            "Elite X Lyrics\n"
+            "Send a song name or a few lines from any song and I will try to find the full lyrics.\n\n"
+            "Commands:\n"
+            "/start - show bot intro\n"
+            "/help - show usage guide\n"
+            "/lyrics <query> - search directly\n"
+            "/credits - creator credits\n\n"
+            "Examples:\n"
+            "Tum Hi Ho\n"
+            "tum hi ho hum tere bin\n"
+            "Sunday song by Aditya\n"
+            "Tu Mere Koi Na by Arijit Singh\n\n"
+            "Hindi lyrics are returned in Hinglish when the source is in Devanagari.\n"
+            "If multiple songs match, I will show buttons so you can choose the correct one.\n"
             f"{inline_hint}\n"
             "Created by Siddhartha Abhimanyu and @IflexElite."
         )

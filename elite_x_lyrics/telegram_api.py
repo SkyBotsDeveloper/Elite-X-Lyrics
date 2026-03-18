@@ -34,6 +34,9 @@ class TelegramAPI:
     async def get_me(self) -> dict[str, Any]:
         return await self.request("getMe", http_method="GET")
 
+    async def set_my_commands(self, commands: list[dict[str, str]]) -> Any:
+        return await self.request("setMyCommands", {"commands": commands})
+
     async def send_chat_action(self, chat_id: int, action: str = "typing") -> Any:
         return await self.request("sendChatAction", {"chat_id": chat_id, "action": action})
 
